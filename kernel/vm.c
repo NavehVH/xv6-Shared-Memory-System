@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+
+#include <inttypes.h>
+
 
 /*
  * the kernel's page table.
@@ -183,9 +188,11 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
+    if(do_free && (*pte & PTE_S) == 0 ){
+       // ONLY FREE IF THE PAGE IS NOT SHARED
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
+      
     }
     *pte = 0;
   }
@@ -436,4 +443,67 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+
+uint64 
+map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size)
+{
+  uint64 start = PGROUNDDOWN(src_va);
+  uint64 end = PGROUNDUP(src_va + size);
+  uint64 offset = src_va - start;
+
+  uint64 dst_start = PGROUNDUP(dst_proc->sz);
+  uint64 dst_va = dst_start;
+
+  for (uint64 va = start; va < end; va += PGSIZE, dst_va += PGSIZE) {
+    pte_t* pte = walk(src_proc->pagetable, va, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+      printf("map_shared_pages: invalid PTE for VA 0x%p\n", va);
+      return 0;
+    }
+
+    uint64 pa = PTE2PA(*pte);
+    int flags = PTE_FLAGS(*pte) | PTE_S;
+
+    if (mappages(dst_proc->pagetable, dst_va, PGSIZE, pa, flags) != 0) {
+      // Cleanup
+      if (dst_va > dst_start) {
+        uvmunmap(dst_proc->pagetable, dst_start, (dst_va - dst_start) / PGSIZE, 0);
+      }
+      return 0;
+    }
+  }
+
+  // Update address space size only if needed
+  if (dst_va > dst_proc->sz)
+    dst_proc->sz = dst_va;
+
+  return dst_start + offset;
+}
+
+
+uint64 
+unmap_shared_pages(struct proc* p, uint64 addr, uint64 size)
+{
+  uint64 start = PGROUNDDOWN(addr);
+  uint64 end = PGROUNDUP(addr + size);
+
+  if (end > p->sz)
+    end = p->sz;
+
+  for (uint64 va = start; va < end; va += PGSIZE) {
+    pte_t* pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_S) == 0) {
+      printf("unmap_shared_pages: invalid or non-shared VA 0x%lx (pte=0x%lx)\n", va, pte ? *pte : 0L);
+      return -1;
+    }
+    uvmunmap(p->pagetable, va, 1, 0);
+  }
+
+  // Safely reduce sz if this was the top
+  if (end == p->sz)
+    p->sz = start;
+
+  return 0;
 }
