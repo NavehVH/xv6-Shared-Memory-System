@@ -13,7 +13,7 @@ static char *shared_buffer = 0;
 // Helper: construct "[child X] Hello!\n"
 void make_child_message(char *buf, int index) {
     const char *prefix = "[child ";
-    const char *suffix = "] Hello!\n";
+    const char *suffix = "] Hi there\n";
     int i = 0;
 
     for (int j = 0; prefix[j]; j++) buf[i++] = prefix[j];
@@ -54,36 +54,47 @@ void write_log_entries(int child_index, uint64 shared_va, const char *message) {
 void read_log_entries(uint64 shared_va) {
     uint64 addr = shared_va;
     int empty_reads = 0;
+    int total_received = 0;
+    const int expected = NCHILDREN * MAX_WRITES;
 
-    while (addr + 4 < shared_va + SHARED_PAGE_SIZE) {
+    while (total_received < expected) {
         uint32 header = *(volatile uint32 *)addr;
 
         if (header == 0) {
-            if (++empty_reads > 5) break;
-            sleep(1);
-            continue;
+            if (++empty_reads > 5) {
+                sleep(1);
+                empty_reads = 0;
+            }
+        } else {
+            empty_reads = 0;
+
+            uint16 child_index = header >> 16;
+            uint16 msg_len = header & 0xFFFF;
+
+            if (msg_len > MAX_MSG_LENGTH) {
+                printf("Invalid msg_len=%d at addr=0x%lx. Skipping.\n", msg_len, addr);
+                addr += 4; // מדלגים רק על header
+                continue;
+            }
+
+            printf("[parent] Received message from child %d (len %d) at 0x%lx\n",
+                   child_index, msg_len, addr);
+
+            char msg[MAX_MSG_LENGTH + 1] = {0};
+            memcpy(msg, (void *)(addr + 4), msg_len);
+            msg[msg_len] = '\0';
+
+            printf("[parent %d] %s\n", child_index, msg);
+
+            total_received++;
+            addr += 4 + msg_len;
         }
 
-        empty_reads = 0;
-
-        uint16 child_index = header >> 16;
-        uint16 msg_len = header & 0xFFFF;
-
-        printf("[parent] Received message from child %d (len %d) at 0x%lx\n",
-               child_index, msg_len, addr);
-
-        char msg[MAX_MSG_LENGTH + 1] = {0};
-        memcpy(msg, (void *)(addr + 4), msg_len);
-        msg[msg_len] = '\0';
-
-        printf("[parent %d] %s\n", child_index, msg);
-
-        addr += 4 + msg_len;
         addr = (addr + 3) & ~3;
+        if (addr + 4 >= shared_va + SHARED_PAGE_SIZE) {
+            addr = shared_va;
+        }
     }
-
-    for (int i = 0; i < NCHILDREN; i++)
-        wait(0);
 }
 
 int main() {

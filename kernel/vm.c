@@ -445,17 +445,19 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
-
+//it adds to the VA of a different process the pages location in the physical memory so they will be shared
 uint64 
 map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size)
 {
-  uint64 start = PGROUNDDOWN(src_va);
-  uint64 end = PGROUNDUP(src_va + size);
-  uint64 offset = src_va - start;
+  uint64 start = PGROUNDDOWN(src_va); //first page-aligned virtual address
+  uint64 end = PGROUNDUP(src_va + size); //make sure the entire region is covered
+  uint64 offset = src_va - start; //how far into the first page the original src_va
 
-  uint64 dst_start = PGROUNDUP(dst_proc->sz);
+  uint64 dst_start = PGROUNDUP(dst_proc->sz); //This ensures we don’t overwrite existing data
   uint64 dst_va = dst_start;
 
+  //Goes over each page from the source address region
+  //And maps it to a new location in the destination’s address space
   for (uint64 va = start; va < end; va += PGSIZE, dst_va += PGSIZE) {
     pte_t* pte = walk(src_proc->pagetable, va, 0);
     if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
@@ -463,11 +465,13 @@ map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, ui
       return 0;
     }
 
+    //Extract physical address and flags
     uint64 pa = PTE2PA(*pte);
-    int flags = PTE_FLAGS(*pte) | PTE_S;
+    int flags = PTE_FLAGS(*pte) | PTE_S; //add flag S as Shared
 
+    //mappages() maps the physical address pa to virtual address dst_va in the destination
     if (mappages(dst_proc->pagetable, dst_va, PGSIZE, pa, flags) != 0) {
-      // Cleanup
+      // Cleanup, if even one mapping fails, we clean up everything we previously mapped
       if (dst_va > dst_start) {
         uvmunmap(dst_proc->pagetable, dst_start, (dst_va - dst_start) / PGSIZE, 0);
       }
@@ -475,7 +479,7 @@ map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, ui
     }
   }
 
-  // Update address space size only if needed
+  // Update address space size only if needed (if grew)
   if (dst_va > dst_proc->sz)
     dst_proc->sz = dst_va;
 
@@ -486,22 +490,26 @@ map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, ui
 uint64 
 unmap_shared_pages(struct proc* p, uint64 addr, uint64 size)
 {
+  //ensures that the region you’re unmapping covers full pages
   uint64 start = PGROUNDDOWN(addr);
   uint64 end = PGROUNDUP(addr + size);
 
+  //Don't unmap beyond the process's memory size
   if (end > p->sz)
     end = p->sz;
 
+  //Loop over each virtual page in the range
   for (uint64 va = start; va < end; va += PGSIZE) {
     pte_t* pte = walk(p->pagetable, va, 0);
+    //don’t want to unmap private memory or memory that wasn’t shared with this function.
     if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_S) == 0) {
       printf("unmap_shared_pages: invalid or non-shared VA 0x%lx (pte=0x%lx)\n", va, pte ? *pte : 0L);
       return -1;
     }
-    uvmunmap(p->pagetable, va, 1, 0);
+    uvmunmap(p->pagetable, va, 1, 0); //Because the page is shared, and likely still in use by the other process. so dont free physical memory
   }
 
-  // Safely reduce sz if this was the top
+  // Adjust the process’s memory size if needed
   if (end == p->sz)
     p->sz = start;
 
