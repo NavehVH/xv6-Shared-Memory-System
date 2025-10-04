@@ -1,61 +1,138 @@
-A fork of xv6 with support for devcontainer.
+Operating Systems – Assignment 3: Memory Management
 
-# Installation
-1. Clone the repository.
-2. Install devcontainer dependencies https://code.visualstudio.com/docs/remote/containers#_installation.
-    * Linux users might need to also do https://docs.docker.com/engine/install/linux-postinstall/.
-3. Open vscode and select File -> open folder.
-4. Select the cloned repository folder.
-5. Press "Reopen in Container".
-6. ???
-7. Profit.
+This repository contains my implementation of Assignment 3 in the Operating Systems (OS 202.1.3031, Spring 2025) course at Ben-Gurion University of the Negev.
+The assignment focuses on extending the xv6 operating system to support shared memory between processes and implementing a multi-process logging system using this mechanism.
 
-xv6 is a re-implementation of Dennis Ritchie's and Ken Thompson's Unix
-Version 6 (v6).  xv6 loosely follows the structure and style of v6,
-but is implemented for a modern RISC-V multiprocessor using ANSI C.
+Overview
 
-ACKNOWLEDGMENTS
+The goal of this project is to understand and implement low-level memory management features in xv6.
+This includes:
 
-xv6 is inspired by John Lions's Commentary on UNIX 6th Edition (Peer
-to Peer Communications; ISBN: 1-57398-013-7; 1st edition (June 14,
-2000)).  See also https://pdos.csail.mit.edu/6.1810/, which provides
-pointers to on-line resources for v6.
+Implementing a shared memory mechanism that allows processes to share physical pages safely.
 
-The following people have made contributions: Russ Cox (context switching,
-locking), Cliff Frey (MP), Xiao Yu (MP), Nickolai Zeldovich, and Austin
-Clements.
+Building a multi-process logging system that uses atomic operations and shared memory to synchronize concurrent writes.
 
-We are also grateful for the bug reports and patches contributed by
-Takahiro Aoyagi, Silas Boyd-Wickizer, Anton Burtsev, carlclone, Ian
-Chen, Dan Cross, Cody Cutler, Mike CAT, Tej Chajed, Asami Doi,
-eyalz800, Nelson Elhage, Saar Ettinger, Alice Ferrazzi, Nathaniel
-Filardo, flespark, Peter Froehlich, Yakir Goaron, Shivam Handa, Matt
-Harvey, Bryan Henry, jaichenhengjie, Jim Huang, Matúš Jókay, John
-Jolly, Alexander Kapshuk, Anders Kaseorg, kehao95, Wolfgang Keller,
-Jungwoo Kim, Jonathan Kimmitt, Eddie Kohler, Vadim Kolontsov, Austin
-Liew, l0stman, Pavan Maddamsetti, Imbar Marinescu, Yandong Mao, Matan
-Shabtay, Hitoshi Mitake, Carmi Merimovich, Mark Morrissey, mtasm, Joel
-Nider, Hayato Ohhashi, OptimisticSide, Harry Porter, Greg Price, Jude
-Rich, segfault, Ayan Shafqat, Eldar Sehayek, Yongming Shen, Fumiya
-Shigemitsu, Cam Tenny, tyfkda, Warren Toomey, Stephen Tu, Rafael Ubal,
-Amane Uehara, Pablo Ventura, Xi Wang, WaheedHafez, Keiichi Watanabe,
-Nicolas Wolovick, wxdao, Grant Wu, Jindong Zhang, Icenowy Zheng,
-ZhUyU1997, and Zou Chang Wei.
+These tasks provide a deeper understanding of how virtual memory, page tables, and interprocess communication (IPC) operate in an OS kernel.
 
+Project Structure
 
-The code in the files that constitute xv6 is
-Copyright 2006-2022 Frans Kaashoek, Robert Morris, and Russ Cox.
+xv6/
+├── kernel/
+│ ├── vm.c, proc.c, sysproc.c, syscall.c # Modified for shared memory mapping
+│ ├── defs.h, riscv.h # Added definitions and PTE_S flag
+│ └── ... # Other core xv6 kernel files
+│
+├── user/
+│ ├── shmem_test.c # Test for shared memory between processes
+│ ├── log_test.c # Multi-process logging system
+│ └── user.h # Added system call declarations
+│
+└── Makefile # Updated to compile new user programs
 
-ERROR REPORTS
+Task 1 – Shared Memory
+Description
 
-Please send errors and suggestions to Frans Kaashoek and Robert Morris
-(kaashoek,rtm@mit.edu).  The main purpose of xv6 is as a teaching
-operating system for MIT's 6.1810, so we are more interested in
-simplifications and clarifications than new features.
+In this task, xv6 was extended to support shared memory mapping between processes.
+The following kernel functions were implemented:
 
-BUILDING AND RUNNING XV6
+uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size);
+uint64 unmap_shared_pages(struct proc* p, uint64 addr, uint64 size);
 
-You will need a RISC-V "newlib" tool chain from
-https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
-riscv64-softmmu.  Once they are installed, and in your shell
-search path, you can run "make qemu".
+These functions use walk(), mappages(), and uvmunmap() to map or unmap physical pages from one process to another.
+
+Key Details
+
+Each shared mapping sets a new flag:
+#define PTE_S (1L << 8) // shared page
+
+Physical pages are freed only by their owning process when it exits.
+
+The kernel’s uvmunmap() and vm.c logic were updated to prevent double freeing of shared pages.
+
+Two system calls were added for user-level access:
+int sys_map_shared_pages(void);
+int sys_unmap_shared_pages(void);
+
+Test Program – shmem_test.c
+
+The test program verifies shared memory functionality by:
+
+Creating a shared mapping between parent and child.
+
+Writing a message (“Hello daddy”) from the child and printing it in the parent.
+
+Unmapping shared memory and confirming malloc() works correctly again.
+
+Printing process memory size before/after mapping and unmapping.
+
+Testing cleanup and persistence when a child exits without unmapping.
+
+Task 2 – Multi-Process Logging
+Description
+
+The second part builds a multi-process logging system using shared memory.
+Multiple child processes write log messages to a shared buffer, while the parent reads them.
+
+Implementation
+
+Each child writes messages using a 4-byte header:
+uint16 child_index
+uint16 message_length
+
+Atomic operations ensure safe concurrent writes using:
+__sync_val_compare_and_swap()
+
+Alignment is preserved with:
+addr = (addr + 3) & ~3;
+
+The parent process scans and prints messages along with their originating process index.
+
+Test Program – log_test.c
+
+Fork at least 4 child processes.
+
+Map a shared buffer across them.
+
+Each child writes multiple messages to the buffer using atomic operations.
+
+The parent reads and prints all logs in order.
+
+Tested with different message lengths and buffer overflow conditions.
+
+Learning Outcomes
+
+Understanding and implementing virtual memory mapping in xv6.
+
+Building and debugging shared memory systems in a real kernel.
+
+Using atomic operations for safe synchronization between concurrent writers.
+
+Designing user-level IPC systems using low-level primitives.
+
+Handling alignment, page table flags, and memory cleanup properly.
+
+Build and Run
+
+Clean and rebuild xv6:
+make clean
+make qemu
+
+Run shared memory test:
+shmem_test
+
+Run multi-process logging test:
+log_test
+
+Verify that:
+
+Shared memory mappings are created and cleaned correctly.
+
+Multiple processes can safely log messages without corruption or crashes.
+
+References
+
+xv6: A simple, Unix-like teaching operating system
+
+Course Material: Operating Systems (202.1.3031) – Ben-Gurion University, Spring 2025
+
+RISC-V Architecture Specification and xv6 source documentation
