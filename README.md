@@ -1,84 +1,158 @@
-# Operating Systems (2025 Assignment 3): Memory Management and Multi-process Logging in xv6
+# Operating Systems – Assignment 3: Memory Management
 
-This repository contains the solution for Assignment 3 of the Operating Systems course, focusing on extending the **xv6** operating system kernel to support **shared memory** and implementing a **multi-process logging system** that utilizes atomic operations.
+This repository contains my implementation of **Assignment 3** in the *Operating Systems (OS 202.1.3031, Spring 2025)* course at **Ben-Gurion University of the Negev**.  
+The assignment focuses on extending the xv6 operating system to support **shared memory between processes** and implementing a **multi-process logging system** using this mechanism.
 
-The assignment was completed in Spring 2025.
+---
 
 ## Overview
 
-This assignment is broken down into two main tasks:
+The goal of this project is to understand and implement low-level **memory management** features in xv6.  
+This includes:
 
-1.  **Task 1: Memory Sharing:** Implementing kernel-level support for inter-process shared memory in xv6.
-2.  **Task 2: Multi-process Logging:** Building a simple, concurrent logging mechanism that uses the shared memory system from Task 1, employing atomic operations for thread safety.
+1. Implementing a **shared memory mechanism** that allows processes to share physical pages safely.  
+2. Building a **multi-process logging system** that uses atomic operations and shared memory to synchronize concurrent writes.
 
----
-
-## Task 1: Memory Sharing Implementation
-
-This task involved modifying the xv6 kernel to allow a memory segment from one process's address space to be mapped into another process's address space.
-
-### Key Kernel Functions Implemented/Modified
-
-The following kernel functions were implemented or modified to support memory sharing:
-
-* [cite_start]`uint64 map_shared_pages (struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size)`: Maps physical pages corresponding to a virtual address (`src_va`) in the source process (`src_proc`) into the destination process (`dst_proc`)[cite: 65, 66, 69].
-    * [cite_start]This function handles page alignment and size calculation, maintains the destination process's address space size (`sz` field), and sets a new `PTE_S` flag[cite: 72, 73, 78, 81].
-* [cite_start]`uint64 unmap_shared_pages (struct proc* p, uint64 addr, uint64 size)`: Unmaps the shared memory from the destination process, updating the process size (`sz`) and checking that the mapping exists and is a shared mapping[cite: 91, 93, 94].
-* [cite_start]**Modification to `uvmunmap()`**: The existing `uvmunmap()` function was modified to prevent freeing physical pages that are marked as shared (`PTE_S`), ensuring that pages are only freed if they were originally allocated by the process being deleted[cite: 95, 100].
-* [cite_start]**System Calls**: The following system calls were exposed to userspace to allow applications to use the new memory sharing functionality[cite: 104, 105]:
-    * `sys_map_shared_pages()`
-    * `sys_unmap_shared_pages()`
-
-### Verification
-
-The shared memory implementation was verified using the user-level test program `shmem_test.c`, which demonstrated:
-
-* [cite_start]Creating a shared mapping from a parent to a child process[cite: 108].
-* [cite_start]Interprocess communication (child writes, parent reads)[cite: 109].
-* [cite_start]Correct unmapping and memory allocation in the child process[cite: 112, 114].
-* [cite_start]Proper cleanup upon process exit, ensuring shared pages are *not* freed by the exiting process[cite: 117, 118].
+These tasks provide a deeper understanding of how **virtual memory**, **page tables**, and **interprocess communication (IPC)** operate in an OS kernel.
 
 ---
 
-## Task 2: Multi-process Logging
+## Project Structure
 
-This task implemented a simple, concurrent logging system using the shared memory buffer created in Task 1.
-
-### Logging Protocol and Structure
-
-[cite_start]The logging system enables multiple child processes to write messages to a shared memory buffer concurrently[cite: 132, 134].
-
-* [cite_start]**Header**: Each log message begins with a 32-bit header encoding two `uint16` values[cite: 139, 140]:
-    * `uint16 child index`: The unique identifier of the process that wrote the message.
-    * [cite_start]`uint16 message length`: The length of the message body (excluding the null terminator)[cite: 140, 141].
-* [cite_start]**Free Segment**: A zero-value header indicates a free segment of the buffer[cite: 141].
-* [cite_start]**Alignment**: All processes advance their address by the message length plus 4 bytes (for the header), and then align to the next 4-byte boundary for the next header[cite: 150, 151].
-
-### Atomic Operations
-
-[cite_start]To manage concurrent writes to the shared buffer, **atomic operations** were used[cite: 137, 144].
-
-* [cite_start]**Claiming a Segment**: A child process claims a free segment by attempting to write its non-zero header[cite: 141]. This is done using the built-in function:
-    [cite_start]`__sync_val_compare_and_swap(ptr, oldval, newval)`[cite: 145].
-* [cite_start]This operation atomically compares the value at a memory location (`ptr`) with `oldval` (the expected zero-value for a free segment) and, if equal, replaces it with the `newval` (the child's new header)[cite: 146]. [cite_start]This prevents multiple processes from simultaneously claiming the same log segment[cite: 137].
-
-### Verification
-
-The multi-process logging was verified using the user-level test program `log_test.c`, which involves:
-
-* [cite_start]Forking a minimum of 4 child processes[cite: 154, 183].
-* [cite_start]Parent process mapping the shared buffer into each child process[cite: 136, 183].
-* [cite_start]Child processes concurrently writing messages and including their unique index[cite: 157, 185].
-* [cite_start]The parent process scanning the buffer, reading non-zero headers, and printing the message along with the originating child index[cite: 143, 158, 186].
-* [cite_start]Proper boundary checks to ensure a process exits if its address exceeds the shared buffer size[cite: 152, 161].
+```
+xv6/
+├── kernel/
+│   ├── vm.c, proc.c, sysproc.c, syscall.c   # Modified for shared memory mapping
+│   ├── defs.h, riscv.h                      # Added definitions and PTE_S flag
+│   └── ...                                  # Other core xv6 kernel files
+│
+├── user/
+│   ├── shmem_test.c                         # Test for shared memory between processes
+│   ├── log_test.c                           # Multi-process logging system
+│   └── user.h                               # Added system call declarations
+│
+└── Makefile                                 # Updated to compile new user programs
+```
 
 ---
 
-## Files Included
+## Task 1 – Shared Memory
 
-| File | Description |
-| :--- | :--- |
-| `kernel/*` | Modified xv6 kernel files (e.g., `vm.c`, `proc.c`, `syscall.c`, `riscv.h`) containing the shared memory implementation and the `PTE_S` flag. |
-| `user/shmem_test.c` | Userspace program to test the functionality of `map_shared_pages` and `unmap_shared_pages`. |
-| `user/log_test.c` | Userspace program implementing the multi-process logging system with atomic operations. |
-| `Makefile` | Updated to compile the new user programs. |
+### Description
+
+In this task, xv6 was extended to support **shared memory mapping** between processes.  
+The following kernel functions were implemented:
+
+```c
+uint64 map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size);
+uint64 unmap_shared_pages(struct proc* p, uint64 addr, uint64 size);
+```
+
+These functions use `walk()`, `mappages()`, and `uvmunmap()` to map or unmap physical pages from one process to another.
+
+### Key Details
+
+- Each shared mapping sets a new flag:
+  ```c
+  #define PTE_S (1L << 8)  // shared page
+  ```
+- Physical pages are freed **only by their owning process** when it exits.  
+- The kernel’s `uvmunmap()` and `vm.c` logic were updated to prevent double freeing of shared pages.  
+- Two system calls were added for user-level access:
+  ```c
+  int sys_map_shared_pages(void);
+  int sys_unmap_shared_pages(void);
+  ```
+
+### Test Program – `shmem_test.c`
+
+The test program verifies shared memory functionality by:  
+1. Creating a shared mapping between parent and child.  
+2. Writing a message (“Hello daddy”) from the child and printing it in the parent.  
+3. Unmapping shared memory and confirming `malloc()` works correctly again.  
+4. Printing process memory size before/after mapping and unmapping.  
+5. Testing cleanup and persistence when a child exits without unmapping.
+
+---
+
+## Task 2 – Multi-Process Logging
+
+### Description
+
+The second part builds a **multi-process logging system** using shared memory.  
+Multiple child processes write log messages to a shared buffer, while the parent reads them.
+
+### Implementation
+
+- Each child writes messages using a 4-byte header:
+  ```c
+  uint16 child_index;
+  uint16 message_length;
+  ```
+- Atomic operations ensure safe concurrent writes:
+  ```c
+  __sync_val_compare_and_swap();
+  ```
+- Alignment is preserved with:
+  ```c
+  addr = (addr + 3) & ~3;
+  ```
+- The parent process scans and prints messages along with their originating process index.
+
+### Test Program – `log_test.c`
+
+1. Fork at least 4 child processes.  
+2. Map a shared buffer across them.  
+3. Each child writes multiple messages to the buffer using atomic operations.  
+4. The parent reads and prints all logs in order.  
+5. Tested with different message lengths and buffer-overflow conditions.
+
+---
+
+## Learning Outcomes
+
+- Understanding and implementing **virtual memory mapping** in xv6.  
+- Building and debugging **shared memory systems** in a real kernel.  
+- Using **atomic operations** for safe synchronization between concurrent writers.  
+- Designing **user-level IPC systems** using low-level primitives.  
+- Handling **alignment**, **page-table flags**, and **memory cleanup** properly.
+
+---
+
+## Build and Run
+
+1. Clean and rebuild xv6:
+   ```bash
+   make clean
+   make qemu
+   ```
+
+2. Run shared memory test:
+   ```bash
+   shmem_test
+   ```
+
+3. Run multi-process logging test:
+   ```bash
+   log_test
+   ```
+
+4. Verify that:  
+   - Shared memory mappings are created and cleaned correctly.  
+   - Multiple processes can safely log messages without corruption or crashes.
+
+---
+
+## References
+
+- xv6: A simple, Unix-like teaching operating system  
+- Course Material: Operating Systems (202.1.3031) – Ben-Gurion University, Spring 2025  
+- RISC-V Architecture Specification and xv6 source documentation  
+
+---
+
+## Repository Name Suggestion
+
+**xv6-Memory-Management-And-IPC**
+
+This name matches your previous convention (`xv6-Processes-And-Syscalls`, `xv6-Synchronization-And-Processes`) and reflects the focus on memory sharing and interprocess communication.
